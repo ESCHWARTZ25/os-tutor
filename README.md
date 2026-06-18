@@ -1,70 +1,97 @@
-# Getting Started with Create React App
+# OS Tutor
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A Socratic learning assistant for Operating Systems concepts, built on AWS Bedrock. Rather than answering questions directly, the tutor guides you through reasoning problems yourself — probing your assumptions, catching common misconceptions, and only explaining directly after repeated failed attempts.
 
-## Available Scripts
+Live demo: http://os-tutor-frontend.s3-website.us-east-2.amazonaws.com
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## Motivation
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+Most AI chat tools answer questions immediately. That's useful for looking things up, but it's a poor way to learn systems-level material. Operating Systems concepts — virtual memory, scheduling, synchronization — require building accurate mental models, not retrieving facts. A tool that just answers "what is a page fault?" teaches you nothing about how to reason through memory management under pressure.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+This project applies the Socratic method: the model asks you to reason first, calibrates its hints based on how many attempts you've made, and watches for specific misconceptions that commonly trip up students approaching the material for the first time at the graduate level.
 
-### `npm test`
+---
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Architecture
 
-### `npm run build`
+```
+React Frontend (S3 static hosting)
+        ↓
+API Gateway (HTTP API, POST /chat)
+        ↓
+AWS Lambda (Python 3.12)
+        ↓
+Amazon Bedrock (Amazon Nova Pro via Converse API)
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+**Frontend:** React single-page application hosted on S3 with static website hosting. Maintains full conversation history in component state and passes it on every request, giving the model complete context without any server-side session management.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+**API Gateway:** HTTP API with a single POST /chat route. CORS configured to allow browser requests from any origin.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+**Lambda:** Stateless Python function that receives the conversation history, strips any leading assistant messages (Bedrock's Converse API requires conversations to begin with a user turn), and forwards the request to Bedrock. Timeout set to 30 seconds to accommodate model inference latency.
 
-### `npm run eject`
+**Bedrock:** Amazon Nova Pro invoked via the Converse API. Nova Pro is a first-party AWS model requiring no additional access request, and the Converse API provides a model-agnostic interface — switching to a different model is a one-line change to the `modelId` parameter.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+---
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+## System Prompt Design
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+The behavior of the tutor is driven almost entirely by the system prompt rather than application logic. Key design decisions:
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+**Attempt-based hint calibration:** The model is instructed to withhold direct answers on the first exchange, provide a targeted hint after two failed attempts, and only explain directly after three — immediately followed by a harder variant of the same question to prevent passive learning.
 
-## Learn More
+**Misconception watch list:** Common OS misconceptions are explicitly enumerated in the prompt so the model probes for them rather than waiting for the student to surface them. These include confusing virtual and physical addresses, conflating mutex and semaphore semantics, and misunderstanding what preemption actually does at the hardware level.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+**Concrete grounding rule:** The model is instructed to always anchor explanations in step-by-step concrete scenarios rather than staying abstract. "What happens when the CPU executes a load instruction targeting an unmapped virtual address" is more useful than "a page fault is when..."
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+**Graduate depth calibration:** The prompt specifies graduate technical depth and discourages oversimplified analogies unless the user is clearly lost, avoiding the condescension that makes general-purpose tutoring tools frustrating for technically experienced learners.
 
-### Code Splitting
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+## AWS Services Used
 
-### Analyzing the Bundle Size
+- **Amazon Bedrock** — model inference via the Converse API (Amazon Nova Pro)
+- **AWS Lambda** — serverless compute for the API handler
+- **Amazon API Gateway** — HTTP API endpoint with CORS
+- **Amazon S3** — static frontend hosting
+- **AWS CloudWatch** — Lambda logging and monitoring
+- **AWS IAM** — execution role with Bedrock invocation permissions
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+---
 
-### Making a Progressive Web App
+## Running Locally
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+Clone the repo and install frontend dependencies:
 
-### Advanced Configuration
+```bash
+git clone <your-repo-url>
+cd os-tutor
+npm install
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+Set your API Gateway endpoint:
 
-### Deployment
+```bash
+# In src/App.js, update:
+const API_URL = "https://your-api-id.execute-api.us-east-2.amazonaws.com/chat";
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+Start the development server:
 
-### `npm run build` fails to minify
+```bash
+npm start
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+For the backend, deploy the Lambda function in `lambda/lambda_function.py` with the `AmazonBedrockFullAccess` policy attached to its execution role, and ensure Nova Pro model access is enabled in your Bedrock console.
+
+---
+
+## What I'd Add in Production
+
+- **CloudFront** in front of S3 for HTTPS and edge caching
+- **DynamoDB** for persistent session history across browser refreshes
+- **Concept tracker** — a Lambda action group that logs which topics have been covered and adjusts question difficulty accordingly
+- **Problem bank** — a curated set of structured questions mapped to the OS concept dependency graph, pulled dynamically rather than relying on the model to generate them
+- **Authentication** — Cognito or a simple API key to prevent open abuse of the Bedrock endpoint
