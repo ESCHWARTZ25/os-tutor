@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 
-const API_URL = "https://jtaj39eg5g.execute-api.us-east-2.amazonaws.com/chat";
+const API_URL = api; 
 
 const SUGGESTIONS = [
   "I think the OS loads it from disk?",
